@@ -13,5 +13,5 @@ To use:
     <dependency>
       <groupId>com.sentaca</groupId>
       <artifactId>redis-ratelimit</artifactId>
-      <version>0.0.1-SNAPSHOT</version>
+      <version>1.0-SNAPSHOT</version>
     </dependency>
