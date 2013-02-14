@@ -1,6 +1,5 @@
 package com.sentaca.redis.ratelimit;
 
-import java.util.Date;
 import java.util.List;
 import java.util.Set;
 
@@ -9,19 +8,16 @@ import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.Transaction;
 
 /**
- * Java port of <a href=
- * 'https://github.com/chriso/redback/blob/master/lib/advanced_structures/RateLimi
- * t . j s ' > r e d b a c k RateLimit</a> nodejs module.
- * 
+ * Java port of <a href= 'http://bit.ly/YaGa0m'>redback RateLimit</a> nodejs
+ * module with some minor modifications.
  * 
  * @author hamster
  * 
  */
 public class RateLimitService {
 
-  private static final int DEFAULT_SUBJECT_EXPIRY = 1200;
-  private static final int DEFAULT_BUCKET_SPAN = 600;
-  private static final int DEFAULT_BUCKET_INTERVAL = 5;
+  private static final int DEFAULT_BUCKET_SPAN = 300;
+  private static final int DEFAULT_BUCKET_INTERVAL = 1;
   private String namespace;
   private String action;
   private int bucketInterval;
@@ -29,47 +25,57 @@ public class RateLimitService {
   private int subjectExpiry;
   private JedisPool pool;
   private int bucketCount;
+  private int tpsInterval;
+  private int bucketsUsedForTps;
+  private int bucketToClear;
 
   /**
-   * <pre>
-   *  Options:
-   *    `bucket_interval` - default is 5 seconds
-   *    `bucket_span`     - default is 10 minutes
-   *    `subject_expiry`  - default is 20 minutes
-   * </pre>
    * 
+   * @param pool
+   *          -redis pool to be used
    * @param namespace
-   *          optional, might be null
+   *          - used to create redis key, might be null
    * @param action
+   *          - required, used to create redis key
+   * @param bucketSpan
+   *          {@link #DEFAULT_BUCKET_SPAN}
+   * @param bucketInterval
+   *          {@value #DEFAULT_BUCKET_INTERVAL}
+   * @param tpsInterval
    */
-  public RateLimitService(JedisPool pool, String namespace, String action, int bucketSpan, int bucketInterval, int subjectExpiry) {
+  public RateLimitService(JedisPool pool, String namespace, String action, int bucketSpan, int bucketInterval, int tpsInterval) {
     this.pool = pool;
     this.namespace = namespace;
     this.action = action;
     this.bucketInterval = bucketInterval;
     this.bucketSpan = bucketSpan;
+    this.tpsInterval = tpsInterval;
     this.bucketCount = Math.round(this.bucketSpan / this.bucketInterval);
-    this.subjectExpiry = subjectExpiry;
+    this.subjectExpiry = bucketSpan - 1;
+    this.bucketsUsedForTps = Math.round(tpsInterval / bucketInterval);
+    this.bucketToClear = bucketCount - bucketsUsedForTps;
+
   }
 
   /**
-   * 
+   * @see #RateLimitService(JedisPool, String, String, int, int, int)
+   * @param pool
    * @param action
-   * @see #RateLimitService(String, String)
+   * @param tpsInterval
    */
-  public RateLimitService(JedisPool pool, String action) {
-    this(pool, null, action);
+  public RateLimitService(JedisPool pool, String action, int tpsInterval) {
+    this(pool, null, action, tpsInterval);
   }
 
   /**
-   * 
+   * @see #RateLimitService(JedisPool, String, String, int, int, int)
+   * @param pool
    * @param namespace
    * @param action
-   * 
-   * @see #RateLimitService(String, String, int, int, int)
+   * @param tpsInterval
    */
-  public RateLimitService(JedisPool pool, String namespace, String action) {
-    this(pool, namespace, action, DEFAULT_BUCKET_INTERVAL, DEFAULT_BUCKET_SPAN, DEFAULT_SUBJECT_EXPIRY);
+  public RateLimitService(JedisPool pool, String namespace, String action, int tpsInterval) {
+    this(pool, namespace, action, DEFAULT_BUCKET_SPAN, DEFAULT_BUCKET_INTERVAL, tpsInterval);
   }
 
   public void addAll(long time, Set<String> subjects) {
@@ -93,9 +99,8 @@ public class RateLimitService {
       m.hincrBy(subjectKey, s(bucket), 1);
 
       // Clear the buckets ahead
-      for (int i = 1; i < 6; i++) {
+      for (int i = 1; i < bucketToClear + 1; i++) {
         m.hdel(subjectKey, s((bucket + i) % this.bucketCount));
-        // m.hdel(subjectKey, s((bucket + 2) % this.bucketCount));
       }
 
       // Renew the key TTL
@@ -108,23 +113,33 @@ public class RateLimitService {
     }
   }
 
-  public int count(long time, String subject, int interval) {
+  public int count(long time, String subject) {
     final Jedis j = pool.getResource();
     try {
       final Transaction m = j.multi();
       final String subjectKey = getKeyForSubject(subject);
 
-      int bucket = getBucket(time);
-      int count = (int) Math.floor(interval / bucketInterval);
+      final int currentBucket = getBucket(time);
+      int bucket = currentBucket;
+      int count = (int) Math.floor(tpsInterval / bucketInterval);
       m.hget(subjectKey, s(bucket));
       while (count-- != 0) {
-        m.hget(subjectKey, s((--bucket + bucketCount) % bucketCount));
+        m.hget(subjectKey, s((bucket + bucketCount) % bucketCount));
+        bucket--;
+      }
+
+      // Clear the buckets ahead
+      for (int i = 1; i < bucketToClear + 1; i++) {
+        m.hdel(subjectKey, s((currentBucket + i) % this.bucketCount));
       }
       List<Object> result = m.exec();
       int sum = 0;
+      int i = 0;
       for (Object object : result) {
-        if (object != null) {
-          sum += i(object);
+        if (i++ < Math.floor(tpsInterval / bucketInterval)) {
+          if (object != null) {
+            sum += i(object);
+          }
         }
       }
       return sum;
