@@ -1,5 +1,6 @@
 package com.sentaca.redis.ratelimit;
 
+import java.util.Date;
 import java.util.List;
 import java.util.Set;
 
@@ -113,7 +114,7 @@ public class RateLimitService {
     }
   }
 
-  public int count(long time, String subject) {
+  public CountResult count(long time, String subject) {
     final Jedis j = pool.getResource();
     try {
       final Transaction m = j.multi();
@@ -122,7 +123,6 @@ public class RateLimitService {
       final int currentBucket = getBucket(time);
       int bucket = currentBucket;
       int count = (int) Math.floor(tpsInterval / bucketInterval);
-      m.hget(subjectKey, s(bucket));
       while (count-- != 0) {
         m.hget(subjectKey, s((bucket + bucketCount) % bucketCount));
         bucket--;
@@ -134,19 +134,50 @@ public class RateLimitService {
       }
       List<Object> result = m.exec();
       int sum = 0;
+      int numberOfEmtpyBuckets = 0;
+      int maxCount = 0;
+      int latestBucketCount = 0;
       int i = 0;
       for (Object object : result) {
+
         if (i++ < Math.floor(tpsInterval / bucketInterval)) {
           if (object != null) {
-            sum += i(object);
+            int c = i(object);
+            sum += c;
+            if (c == 0) {
+              numberOfEmtpyBuckets++;
+            }
+            if (c > maxCount) {
+              maxCount = c;
+            }
+            if (i == 1) {
+              latestBucketCount = c;
+            }
+          } else {
+            numberOfEmtpyBuckets++;
           }
         }
       }
-      return sum;
+      return new CountResult(sum, numberOfEmtpyBuckets, maxCount, latestBucketCount);
     } finally {
       pool.returnResource(j);
     }
+  }
 
+  public Tps tps(String subject) {
+    CountResult cr = count(new Date().getTime(), subject);
+    double tps = (double) cr.getCount() / (double) tpsInterval;
+    double tpsNoEmptyBuckets = 0;
+
+    double factor = (double) (tpsInterval - cr.getNumberOfEmptyBuckets() * this.bucketInterval);
+    if (factor != 0) {
+      tpsNoEmptyBuckets = cr.getCount() / factor;
+    }
+
+    double peakTps = ((double) cr.getPeakCount()) / ((double) this.bucketInterval);
+    double latestBucketTps = ((double) cr.getLatestBucketCount()) / ((double) this.bucketInterval);
+
+    return new Tps(tps, tpsNoEmptyBuckets, peakTps, latestBucketTps, cr);
   }
 
   private int i(Object i) {
