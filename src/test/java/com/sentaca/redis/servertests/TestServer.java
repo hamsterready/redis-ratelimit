@@ -33,7 +33,9 @@ public class TestServer {
   private int currentThreads = 0;
   private Object lock = new Object();
 
-  public TestServer(int allowedTps, int bucketSpan, int bucketInterval, int tpsInterval) {
+  private ThrottleRuleType ruleType = ThrottleRuleType.BY_AVERAGE_TPS;
+
+  public TestServer(int allowedTps, int bucketSpan, int bucketInterval, int tpsInterval, ThrottleRuleType rule) {
     jedisPool = new JedisPool("localhost");
     Jedis j = jedisPool.getResource();
     j.flushDB();
@@ -44,7 +46,9 @@ public class TestServer {
 
     rateService = new RateLimitService(jedisPool, null, "access", bucketSpan, bucketInterval, tpsInterval);
 
-    System.out.println("    time \t hit \t tps \t tps-no-empty-buckets \t tps-peak \t tps-latest-bucket \t empty-buckets \t hit-waiting");
+    this.ruleType = rule;
+
+    System.out.println("    time \t hit \t tps \t tps-no-empty-buckets \t tps-peak \t tps-latest-bucket \t empty-buckets \t hit-waiting sleep[ms] threads");
   }
 
   public void hit() {
@@ -75,12 +79,14 @@ public class TestServer {
     final int hit = hitNumber;
 
     Tps tps = rateService.tps("192.168.1.1");
+
+    /* get current TPS depending on the throttle rule */
+    double currentTps;
     
-    
-    while (tps.getTps() > allowedTPS) {
-      long sleep = (long) (tpsInterval * (tps.getTps() - allowedTPS) * 1000 / allowedTPS);
+    while ((currentTps = getCurrentTps(tps)) > allowedTPS) {
+      long sleep = (long) (tpsInterval * (currentTps - allowedTPS) * 1000 / allowedTPS);
       printMessage(hit, tps, sleep);
-      
+
       sleepCount++;
       Thread.sleep(sleep);
 
@@ -107,7 +113,6 @@ public class TestServer {
             try {
               _hit();
             } catch (InterruptedException e) {
-              // TODO Auto-generated catch block
               e.printStackTrace();
             } finally {
               returnThread();
@@ -127,16 +132,30 @@ public class TestServer {
       currentThreads--;
     }
   }
-  
-  private void printMessage(int hit, Tps tps, long sleepTime){
+
+  private void printMessage(int hit, Tps tps, long sleepTime) {
     SimpleDateFormat sdf = new SimpleDateFormat("HH:mm:ss.SSS");
     DecimalFormat df = new DecimalFormat("0.0");
     Calendar date = Calendar.getInstance();
-    
+
     boolean hitWaiting = (sleepTime == 0);
-    
+
     System.out.println(sdf.format(date.getTime()) + "\t " + hit + "\t " + df.format(tps.getTps()) + "\t\t" + df.format(tps.getTpsNoEmptyBuckets()) + "\t\t    "
         + df.format(tps.getPeakTps()) + "                " + df.format(tps.getLatestBucketTps()) + "\t\t       "
         + df.format(tps.getCounters().getNumberOfEmptyBuckets()) + "\t     " + hitWaiting + "\t" + sleepTime + "\t" + currentThreads);
+  }
+
+  private double getCurrentTps(Tps tps) {
+    switch (ruleType) {
+    case BY_NO_EMTPY_BUCKETS_TPS:
+      return tps.getTpsNoEmptyBuckets();
+    case BY_PEAK_TPS:
+      return tps.getPeakTps();
+    case BY_LATEST_BUCKET_TPS:
+      return tps.getLatestBucketTps();
+    default:
+    case BY_AVERAGE_TPS:
+      return tps.getTps();
+    }
   }
 }
