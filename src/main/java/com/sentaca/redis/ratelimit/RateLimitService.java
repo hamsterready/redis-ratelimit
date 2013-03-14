@@ -30,6 +30,8 @@ public class RateLimitService {
   private int bucketsUsedForTps;
   private int bucketToClear;
 
+  private SubjectKeyGenerator subjectKeyGenerator = new SubjectKeyGenerator();
+
   /**
    * 
    * @param pool
@@ -91,7 +93,7 @@ public class RateLimitService {
 
   public void add(long time, String subject) {
     final int bucket = getBucket(time);
-    final String subjectKey = getKeyForSubject(subject);
+    final String subjectKey = subjectKeyGenerator.getKeyForSubject(namespace, action, subject);
     final Jedis j = pool.getResource();
     try {
       Transaction m = j.multi();
@@ -118,7 +120,7 @@ public class RateLimitService {
     final Jedis j = pool.getResource();
     try {
       final Transaction m = j.multi();
-      final String subjectKey = getKeyForSubject(subject);
+      final String subjectKey = subjectKeyGenerator.getKeyForSubject(namespace, action, subject);
 
       final int currentBucket = getBucket(time);
       int bucket = currentBucket;
@@ -186,12 +188,5 @@ public class RateLimitService {
 
   private String s(int i) {
     return String.valueOf(i);
-  }
-
-  private String getKeyForSubject(String subject) {
-    if (namespace == null) {
-      return action + ":" + subject;
-    }
-    return namespace + ":" + action + ":" + subject;
   }
 }
