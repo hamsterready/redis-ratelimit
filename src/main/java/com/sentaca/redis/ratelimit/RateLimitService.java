@@ -17,8 +17,8 @@ import redis.clients.jedis.Transaction;
  */
 public class RateLimitService {
 
-  private static final int DEFAULT_BUCKET_SPAN = 300;
-  private static final int DEFAULT_BUCKET_INTERVAL = 1;
+  private static final int DEFAULT_BUCKET_SPAN = 300; // in seconds
+  private static final int DEFAULT_BUCKET_INTERVAL = 1; // in seconds
   private String namespace;
   private String action;
   private int bucketInterval;
@@ -45,6 +45,7 @@ public class RateLimitService {
    * @param bucketInterval
    *          {@value #DEFAULT_BUCKET_INTERVAL}
    * @param tpsInterval
+   *          - time window (span) in seconds where the TPS value is calculated
    */
   public RateLimitService(JedisPool pool, String namespace, String action, int bucketSpan, int bucketInterval, int tpsInterval) {
     this.pool = pool;
@@ -65,6 +66,7 @@ public class RateLimitService {
    * @param pool
    * @param action
    * @param tpsInterval
+   *          - time window (span) in seconds where the TPS value is calculated
    */
   public RateLimitService(JedisPool pool, String action, int tpsInterval) {
     this(pool, null, action, tpsInterval);
@@ -76,6 +78,7 @@ public class RateLimitService {
    * @param namespace
    * @param action
    * @param tpsInterval
+   *          - time window (span) in seconds where the TPS value is calculated
    */
   public RateLimitService(JedisPool pool, String namespace, String action, int tpsInterval) {
     this(pool, namespace, action, DEFAULT_BUCKET_SPAN, DEFAULT_BUCKET_INTERVAL, tpsInterval);
